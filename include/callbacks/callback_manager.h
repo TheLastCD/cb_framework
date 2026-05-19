@@ -1,129 +1,150 @@
 #ifndef CALLBACKS_CALLBACK_MANAGER_H
 #define CALLBACKS_CALLBACK_MANAGER_H
 
-#include <msg/msg.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * @file callback_manager.h
- * @brief Callback framework for message responses
- * 
- * This module provides a customizable callback system that allows applications to:
- * - Register callback functions to be invoked when specific message types are received
- * - Trigger callbacks when responses arrive for sent messages
- * - Associate user data with callbacks for context passing
- * 
- * Example:
- *   - Send a PING message
- *   - Receiver responds with positive confirmation
- *   - Callback is triggered automatically
+ * @brief Generic callback manager for application events
+ *
+ * This module provides a reusable callback system suitable for integration into
+ * different projects. Callbacks are registered against a manager instance and
+ * triggered with a generic event pointer. The user can implement custom filters
+ * and context management without depending on a specific message type.
  */
 
 /**
  * @typedef callback_fn
  * @brief Callback function signature
- * 
- * @param msg The received message that triggered the callback
+ *
+ * @param event The generic event or message payload that triggered the callback
  * @param context User-provided context data (can be NULL)
  * @return 0 on success, negative on failure
  */
-typedef int (*callback_fn)(const Msg *msg, void *context);
+typedef int (*callback_fn)(const void *event, void *context);
 
 /**
  * @typedef callback_filter_fn
- * @brief Filter function to determine if a callback should execute
- * 
- * Allows fine-grained control over when callbacks execute
- * 
- * @param msg The message to evaluate
+ * @brief Filter used to decide if a callback should execute
+ *
+ * @param event The generic event or message payload
  * @param context User-provided context data
  * @return true if callback should execute, false otherwise
  */
-typedef bool (*callback_filter_fn)(const Msg *msg, void *context);
+typedef bool (*callback_filter_fn)(const void *event, void *context);
 
 /**
  * @struct callback_config_t
- * @brief Configuration for a message callback
+ * @brief Configuration for a callback registration
  */
 typedef struct {
-    bdy_type message_type;        /**< Message type to match (e.g., bdy_PING) */
-    bdr_ret response_type;        /**< Response type to match (e.g., bdy_CONFIRM) */
-    callback_fn on_response;      /**< Function to call when response is received */
-    callback_filter_fn filter;    /**< Optional filter function (NULL = no filter) */
-    void *context;                /**< User-provided context passed to callbacks */
+    callback_fn callback;          /**< Function to execute when event is triggered */
+    callback_filter_fn filter;     /**< Optional filter to gate callback execution */
+    void *context;                 /**< User-provided context passed to callback/filter */
 } callback_config_t;
 
 /**
- * Initialize the callback manager
- * Must be called before any other callback functions
- * 
- * @return 0 on success, -1 on failure
+ * @struct callback_manager_t
+ * @brief Opaque callback manager handle
  */
+typedef struct callback_manager_t callback_manager_t;
+
+/**
+ * Create a callback manager instance.
+ *
+ * @param max_callbacks Maximum number of callbacks to support.
+ * @return Pointer to manager on success, NULL on failure.
+ */
+callback_manager_t *cb_manager_create(size_t max_callbacks);
+
+/**
+ * Destroy a callback manager and free associated resources.
+ *
+ * @param manager Manager pointer returned from cb_manager_create.
+ * @return 0 on success, -1 on failure.
+ */
+int cb_manager_destroy(callback_manager_t *manager);
+
+/**
+ * Register a callback with a callback manager.
+ *
+ * @param manager Manager instance.
+ * @param config Callback registration configuration.
+ * @return Callback ID (>= 0) on success, -1 on failure.
+ */
+int cb_manager_add_callback(callback_manager_t *manager, const callback_config_t *config);
+
+/**
+ * Unregister a callback from a manager.
+ *
+ * @param manager Manager instance.
+ * @param callback_id Callback ID returned from cb_manager_add_callback.
+ * @return 0 on success, -1 on failure.
+ */
+int cb_manager_remove_callback(callback_manager_t *manager, int callback_id);
+
+/**
+ * Trigger callbacks for a given event.
+ *
+ * @param manager Manager instance.
+ * @param event Generic event pointer passed to callbacks.
+ * @return Number of callbacks executed, or -1 on error.
+ */
+int cb_manager_trigger(callback_manager_t *manager, const void *event);
+
+/**
+ * Get the number of registered callbacks.
+ *
+ * @param manager Manager instance.
+ * @return Number of active callbacks, or 0 if manager is NULL.
+ */
+size_t cb_manager_get_count(const callback_manager_t *manager);
+
+/**
+ * Unregister all callbacks from a manager.
+ *
+ * @param manager Manager instance.
+ * @return 0 on success, -1 on failure.
+ */
+int cb_manager_clear_all(callback_manager_t *manager);
+
+/**
+ * Check whether the manager has any callbacks registered.
+ *
+ * @param manager Manager instance.
+ * @return true if any callbacks exist, false otherwise.
+ */
+bool cb_manager_has_callbacks(const callback_manager_t *manager);
+
+/**
+ * @name Global default manager wrappers
+ *
+ * These wrappers maintain the original function names while forwarding to a
+ * default manager instance. Use the manager-based API directly for reusable
+ * integration in other projects.
+ */
+/*@{*/
+
+#define CB_DEFAULT_MANAGER_CAPACITY 64
+
 int cb_manager_init(void);
-
-/**
- * Cleanup the callback manager and free resources
- * 
- * @return 0 on success, -1 on failure
- */
 int cb_manager_cleanup(void);
-
-/**
- * Register a callback for a specific message type and response type
- * 
- * @param config Callback configuration
- * @return ID of the registered callback (>= 0) on success, -1 on failure
- * 
- * Example:
- *   callback_config_t config = {
- *       .message_type = bdy_PING,
- *       .response_type = bdy_CONFIRM,
- *       .on_response = my_ping_callback,
- *       .filter = NULL,
- *       .context = my_data
- *   };
- *   int callback_id = cb_register(&config);
- */
 int cb_register(const callback_config_t *config);
-
-/**
- * Unregister a previously registered callback
- * 
- * @param callback_id The ID returned from cb_register
- * @return 0 on success, -1 on failure
- */
 int cb_unregister(int callback_id);
-
-/**
- * Trigger all matching callbacks for a received message
- * Usually called internally by message processing code
- * 
- * @param msg The received message
- * @return Number of callbacks executed (0 or more), -1 on error
- */
-int cb_trigger(const Msg *msg);
-
-/**
- * Get the number of registered callbacks
- * 
- * @return Number of currently registered callbacks
- */
-int cb_get_count(void);
-
-/**
- * Clear all registered callbacks
- * 
- * @return 0 on success, -1 on failure
- */
+int cb_trigger(const void *event);
+size_t cb_get_count(void);
 int cb_clear_all(void);
+bool cb_has_callbacks(void);
 
-/**
- * Query if a specific message type has callbacks
- * 
- * @param message_type The message type to check
- * @return true if callbacks exist for this type, false otherwise
- */
-bool cb_has_callbacks_for_type(bdy_type message_type);
+/*@}*/
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // CALLBACKS_CALLBACK_MANAGER_H
